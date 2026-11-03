@@ -18,6 +18,8 @@ DEFAULTS = {
     "accent": "#63B3ED",
     "font_size": 11,
     "width": 245,
+    "height": 180,
+    "speed_unit": "Auto",
     "alpha": 0.92,
     "show_download": True,
     "show_upload": True,
@@ -103,48 +105,54 @@ class NetworkMonitor:
     def place_window(self):
         self.root.update_idletasks()
         x, y = self.settings.get("x"), self.settings.get("y")
+        width = int(self.settings.get("width", DEFAULTS["width"]))
+        height = int(self.settings.get("height", DEFAULTS["height"]))
         if isinstance(x, int) and isinstance(y, int):
-            self.root.geometry(f"+{x}+{y}")
+            self.root.geometry(f"{width}x{height}+{x}+{y}")
         else:
             sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-            self.root.geometry(f"+{sw-280}+{sh-180}")
+            self.root.geometry(f"{width}x{height}+{max(0, sw-width-25)}+{max(0, sh-height-80)}")
 
     def build_ui(self):
         s = self.settings
+        # Scale the complete widget layout (not only the text) to the selected dimensions.
+        scale = max(0.65, min(1.45, min(s["width"] / 245, s["height"] / 180)))
+        self.ui_scale = scale
         self.panel = tk.Frame(self.root, bg=s["bg"], bd=1, relief="solid",
                               highlightthickness=1, highlightbackground=s["accent"])
         self.panel.pack(fill="both", expand=True)
         top = tk.Frame(self.panel, bg=s["bg"])
-        top.pack(fill="x", padx=9, pady=(5, 1))
+        top.pack(fill="x", padx=max(4, int(9*scale)), pady=(max(2, int(5*scale)), 1))
         self.title_label = tk.Label(top, text="NETWORK MONITOR", bg=s["bg"], fg=s["accent"],
-                                    font=("Segoe UI", max(8, s["font_size"]-2), "bold"))
+                                    font=("Segoe UI", max(7, int((s["font_size"]-2)*scale)), "bold"))
         self.title_label.pack(side="left")
         tk.Button(top, text="⚙", command=self.open_settings, bg=s["bg"], fg=s["fg"],
                   activebackground=s["accent"], activeforeground="#000000",
-                  bd=0, padx=5, font=("Segoe UI", 10), cursor="hand2").pack(side="right")
+                  bd=0, padx=max(2, int(5*scale)), font=("Segoe UI", max(8, int(10*scale))), cursor="hand2").pack(side="right")
         tk.Button(top, text="×", command=self.quit, bg=s["bg"], fg=s["fg"],
                   activebackground="#E53E3E", activeforeground="white",
-                  bd=0, padx=5, font=("Segoe UI", 12, "bold"), cursor="hand2").pack(side="right")
+                  bd=0, padx=max(2, int(5*scale)), font=("Segoe UI", max(8, int(12*scale)), "bold"), cursor="hand2").pack(side="right")
 
         self.labels = {}
-        self.make_line("download", "↓ Download", "0.00 MB/s")
-        self.make_line("upload", "↑ Upload", "0.00 MB/s")
+        self.make_line("download", "↓ Download", self.format_speed(0))
+        self.make_line("upload", "↑ Upload", self.format_speed(0))
         self.make_line("ping", "◉ Ping", "...")
         self.make_line("status", "● Status", "Checking")
         self.apply_visibility()
 
         hint = tk.Label(self.panel, text="Drag to move • ⚙ Settings", bg=s["bg"],
-                        fg="#A0AEC0", font=("Segoe UI", 8))
-        hint.pack(anchor="e", padx=9, pady=(0, 5))
+                        fg="#A0AEC0", font=("Segoe UI", max(6, int(8*scale))))
+        hint.pack(anchor="e", padx=max(4, int(9*scale)), pady=(0, max(2, int(5*scale))))
 
     def make_line(self, key, caption, initial):
+        scale = self.ui_scale
         row = tk.Frame(self.panel, bg=self.settings["bg"])
-        row.pack(fill="x", padx=10, pady=2)
+        row.pack(fill="x", padx=max(4, int(10*scale)), pady=max(0, int(2*scale)))
         left = tk.Label(row, text=caption, bg=self.settings["bg"], fg=self.settings["fg"],
-                        font=("Segoe UI", self.settings["font_size"]))
+                        font=("Segoe UI", max(7, int(self.settings["font_size"]*scale))))
         left.pack(side="left")
         right = tk.Label(row, text=initial, bg=self.settings["bg"], fg=self.settings["accent"],
-                         font=("Segoe UI", self.settings["font_size"], "bold"))
+                         font=("Segoe UI", max(7, int(self.settings["font_size"]*scale)), "bold"))
         right.pack(side="right")
         self.labels[key] = (row, left, right)
 
@@ -173,15 +181,25 @@ class NetworkMonitor:
         self.settings["x"], self.settings["y"] = self.root.winfo_x(), self.root.winfo_y()
         save_settings(self.settings)
 
+    def format_speed(self, bytes_per_second):
+        unit = self.settings.get("speed_unit", "Auto")
+        if unit == "KB/s":
+            return f"{bytes_per_second / 1024:.1f} KB/s"
+        if unit == "MB/s":
+            return f"{bytes_per_second / (1024 * 1024):.2f} MB/s"
+        if bytes_per_second >= 1024 * 1024:
+            return f"{bytes_per_second / (1024 * 1024):.2f} MB/s"
+        return f"{bytes_per_second / 1024:.1f} KB/s"
+
     def refresh(self):
         now = time.monotonic()
         counters = psutil.net_io_counters()
         elapsed = max(now - self.last_time, 0.001)
-        self.down = max(0, counters.bytes_recv - self.last.bytes_recv) / elapsed / (1024 * 1024)
-        self.up = max(0, counters.bytes_sent - self.last.bytes_sent) / elapsed / (1024 * 1024)
+        self.down = max(0, counters.bytes_recv - self.last.bytes_recv) / elapsed
+        self.up = max(0, counters.bytes_sent - self.last.bytes_sent) / elapsed
         self.last, self.last_time = counters, now
-        self.labels["download"][2].config(text=f"{self.down:.2f} MB/s")
-        self.labels["upload"][2].config(text=f"{self.up:.2f} MB/s")
+        self.labels["download"][2].config(text=self.format_speed(self.down))
+        self.labels["upload"][2].config(text=self.format_speed(self.up))
         self.labels["ping"][2].config(text=self.ping)
         online = self.check_connection()
         self.labels["status"][2].config(
@@ -204,7 +222,7 @@ class NetworkMonitor:
         win = tk.Toplevel(self.root)
         self.settings_window = win
         win.title("Network Monitor Settings")
-        win.geometry("360x570")
+        win.geometry("380x690")
         win.resizable(False, False)
         win.configure(bg="#F7FAFC")
         win.attributes("-topmost", True)
@@ -219,8 +237,15 @@ class NetworkMonitor:
                      font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(9, 3))
 
         section("SIZE & TRANSPARENCY")
-        self.add_scale(outer, "Width", "width", 190, 420, 5)
+        self.add_scale(outer, "Width (px)", "width", 150, 500, 5)
+        self.add_scale(outer, "Height (px)", "height", 125, 420, 5)
         self.add_scale(outer, "Font size", "font_size", 8, 20, 1)
+        section("SPEED UNIT")
+        self.unit_var = tk.StringVar(value=self.settings.get("speed_unit", "Auto"))
+        unit_menu = tk.OptionMenu(outer, self.unit_var, "Auto", "KB/s", "MB/s")
+        unit_menu.config(bg="#E2E8F0", fg="#2D3748", bd=0, highlightthickness=0,
+                         activebackground="#CBD5E0", width=12)
+        unit_menu.pack(anchor="w")
         self.add_scale(outer, "Transparency", "alpha_percent", 35, 100, 5,
                        initial=int(self.settings["alpha"]*100))
 
@@ -271,6 +296,8 @@ class NetworkMonitor:
 
     def save_from_settings(self):
         self.settings["width"] = self.scale_width.get()
+        self.settings["height"] = self.scale_height.get()
+        self.settings["speed_unit"] = self.unit_var.get()
         self.settings["font_size"] = self.scale_font_size.get()
         self.settings["alpha"] = self.scale_alpha_percent.get()/100
         for key, var in self.vars.items():
@@ -302,7 +329,7 @@ class NetworkMonitor:
         self.root.configure(bg=self.settings["bg"])
         self.build_ui()
         self.bind_drag(self.panel)
-        self.root.geometry(f'{self.settings["width"]}x180+{self.root.winfo_x()}+{self.root.winfo_y()}')
+        self.root.geometry(f'{self.settings["width"]}x{self.settings["height"]}+{self.root.winfo_x()}+{self.root.winfo_y()}')
         self.apply_alpha()
 
     def quit(self):
